@@ -83,7 +83,8 @@ jobs:
             -derivedDataPath build/dd \
             -skipPackagePluginValidation \
             CODE_SIGN_IDENTITY=- | tee build/xcodebuild.log | grep -E "error:|warning: .*ReFrame|BUILD (SUCCEEDED|FAILED)" || true
-          test -d build/dd/Build/Products/Release/ReFrame.app
+          grep -q "BUILD SUCCEEDED" build/xcodebuild.log
+          test -f build/dd/Build/Products/Release/ReFrame.app/Contents/MacOS/ReFrame
 
       - name: Ad-hoc sign and verify
         run: |

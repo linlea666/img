@@ -24,7 +24,7 @@ final class ZoomController: ObservableObject {
                      imageWidth: imageSize.width, imageHeight: imageSize.height)
     }
 
-    private var backingScale: Double { NSScreen.main?.backingScaleFactor ?? 2 }
+    private var backingScale: Double { Double(NSScreen.main?.backingScaleFactor ?? 2) }
 
     /// 计算图片显示位置，并记住尺寸供事件处理使用
     func displayRect(in size: CGSize, image: CGSize) -> CGRect {

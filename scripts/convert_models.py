@@ -178,12 +178,16 @@ class ModulatedConv2d(nn.Module):
             x = F.interpolate(x, scale_factor=2, mode="bilinear", align_corners=False)
         elif self.sample_mode == "downsample":
             x = F.interpolate(x, scale_factor=0.5, mode="bilinear", align_corners=False)
-        out = F.conv2d(x * s.view(1, -1, 1, 1), w, padding=self.padding)
         if self.demodulate:
+            # s 最大可达数百，s² 会超出 FP16 上限（65504）。先除以 max|s| 归一化：
+            # conv(x·s, W)·rsqrt(s²·ΣW² + ε) = conv(x·ŝ, W)·rsqrt(ŝ²·ΣW² + ε/k²)，ŝ = s/k
+            k = s.abs().amax(dim=1, keepdim=True) + 1e-6
+            s = s / k
             w_sq = w.pow(2).sum(dim=(2, 3))              # (c_out, c_in)
-            demod = torch.rsqrt(torch.matmul(s * s, w_sq.t()) + self.eps)  # (1, c_out)
-            out = out * demod.view(1, -1, 1, 1)
-        return out
+            demod = torch.rsqrt(torch.matmul(s * s, w_sq.t()) + 1e-8)  # (1, c_out)
+            out = F.conv2d(x * s.view(1, -1, 1, 1), w, padding=self.padding)
+            return out * demod.view(1, -1, 1, 1)
+        return F.conv2d(x * s.view(1, -1, 1, 1), w, padding=self.padding)
 
 
 class StyleConv(nn.Module):

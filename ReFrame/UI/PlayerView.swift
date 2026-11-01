@@ -12,6 +12,7 @@ struct PlayerView: View {
     @State private var scope: AppState.PlayScope = .all
     @State private var source: AppState.PlaySource = .restored
     @State private var immersive = false
+    @StateObject private var zoom = ZoomController()
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -34,12 +35,12 @@ struct PlayerView: View {
             return .handled
         }
         .onKeyPress(characters: CharacterSet(charactersIn: "fF")) { _ in toggleImmersive(); return .handled }
-        .onAppear { reload(); focused = true }
+        .onAppear { reload(); focused = true; zoom.startMonitoring() }
         .onChange(of: scope) { _, _ in reload() }
         .onChange(of: source) { _, _ in reload() }
         .onChange(of: state.batch.isRunning) { _, running in if !running { reload() } }
         .onChange(of: state.settings.orientation) { _, _ in reload() }
-        .onDisappear { player.pause() }
+        .onDisappear { player.pause(); zoom.stopMonitoring() }
     }
 
     // MARK: - 来源
@@ -107,24 +108,8 @@ struct PlayerView: View {
         }
     }
 
-    @ViewBuilder
     private func frameImage(_ image: CGImage?, caption: String?, smooth: Bool) -> some View {
-        if let image {
-            Image(decorative: image, scale: 1)
-                .resizable()
-                .interpolation(smooth ? .high : .medium)
-                .aspectRatio(contentMode: .fit)
-                .overlay(alignment: .topLeading) {
-                    if let caption {
-                        Text(caption).font(.caption.bold()).padding(4)
-                            .background(Color.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 3))
-                            .foregroundStyle(.white).padding(6)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
+        ZoomableFrame(image: image, caption: caption, smooth: smooth, zoom: zoom)
     }
 
     // MARK: - 控制条
@@ -170,6 +155,8 @@ struct PlayerView: View {
                 Text(player.frames.isEmpty ? "" : "\(player.index + 1)/\(player.frames.count)  \(player.currentName)")
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.middle)
+                ZoomControls(zoom: zoom)
+                    .disabled(player.frames.isEmpty)
                 Button { state.showExport = true } label: { Image(systemName: "film") }
                     .help("导出为视频")
                     .disabled(player.frames.isEmpty)
@@ -192,6 +179,83 @@ struct PlayerView: View {
         if let window = NSApp.keyWindow {
             let isFull = window.styleMask.contains(.fullScreen)
             if isFull != immersive { window.toggleFullScreen(nil) }
+        }
+    }
+}
+
+/// 播放器里可缩放的一帧：放大后拖动平移；并排对比时两个画面共用同一个缩放状态，保持同步。
+/// 放大后继续播放，可以盯住一张脸看它在连续帧里是否稳定。
+struct ZoomableFrame: View {
+    let image: CGImage?
+    let caption: String?
+    let smooth: Bool
+    @ObservedObject var zoom: ZoomController
+    @State private var lastTranslation: CGSize = .zero
+    /// 按住 ⌥ 拖动时的框选区域
+    @State private var selection: CGRect?
+    @State private var selecting: Bool?
+
+    var body: some View {
+        GeometryReader { geo in
+            if let image {
+                let r = zoom.displayRect(in: geo.size, image: CGSize(width: image.width, height: image.height))
+                ZStack(alignment: .topLeading) {
+                    Image(decorative: image, scale: 1)
+                        .resizable()
+                        .interpolation(smooth ? .high : .medium)
+                        .frame(width: r.width, height: r.height)
+                        .offset(x: r.minX, y: r.minY)
+                    if let caption {
+                        Text(caption).font(.caption.bold()).padding(4)
+                            .background(Color.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 3))
+                            .foregroundStyle(.white).padding(6)
+                    }
+                    if let sel = selection { SelectionBox(rect: sel) }
+                }
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                .clipped()
+                .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let p):
+                        // 并排时两个画面尺寸相同，记下当前画面的尺寸和指针位置
+                        _ = zoom.displayRect(in: geo.size, image: CGSize(width: image.width, height: image.height))
+                        zoom.hover = p
+                    case .ended:
+                        zoom.hover = nil
+                    }
+                }
+                .gesture(DragGesture(minimumDistance: 2)
+                    .onChanged { g in
+                        if selecting == nil { selecting = NSEvent.modifierFlags.contains(.option) }
+                        if selecting == true {
+                            // 按住 ⌥ 拖动：框选任意区域放大
+                            selection = CGRect(x: min(g.startLocation.x, g.location.x),
+                                               y: min(g.startLocation.y, g.location.y),
+                                               width: abs(g.location.x - g.startLocation.x),
+                                               height: abs(g.location.y - g.startLocation.y))
+                            return
+                        }
+                        guard zoom.isZoomed else { return }
+                        zoom.pan(dx: g.translation.width - lastTranslation.width,
+                                 dy: g.translation.height - lastTranslation.height)
+                        lastTranslation = g.translation
+                    }
+                    .onEnded { _ in
+                        if let sel = selection, sel.width > 6, sel.height > 6, r.width > 0, r.height > 0 {
+                            let x0 = max(0, (sel.minX - r.minX) / r.width), y0 = max(0, (sel.minY - r.minY) / r.height)
+                            let x1 = min(1, (sel.maxX - r.minX) / r.width), y1 = min(1, (sel.maxY - r.minY) / r.height)
+                            if x1 > x0, y1 > y0 {
+                                zoom.focus(on: CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0), fill: 0.95)
+                            }
+                        }
+                        selection = nil
+                        selecting = nil
+                        lastTranslation = .zero
+                    })
+            } else {
+                ProgressView().frame(width: geo.size.width, height: geo.size.height)
+            }
         }
     }
 }

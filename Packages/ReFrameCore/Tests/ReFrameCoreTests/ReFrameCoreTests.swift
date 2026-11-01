@@ -219,9 +219,14 @@ final class OrientationTests: XCTestCase {
         let same = r.reanchored(inWidth: 1920, height: 1080, toWidth: 1920, height: 1080)
         XCTAssertEqual(same, r)
         // 转 90° 变竖屏：保持到右边、下边的距离
-        let portrait = r.reanchored(inWidth: 1920, height: 1080, toWidth: 1080, height: 1920)
-        XCTAssertEqual(portrait.maxX, 1080 - (1920 - r.maxX))
-        XCTAssertEqual(portrait.maxY, 1920 - (1080 - r.maxY))
+        let small = PixelRect(x: 1500, y: 990, width: 300, height: 60)
+        let portrait = small.reanchored(inWidth: 1920, height: 1080, toWidth: 1080, height: 1920)
+        XCTAssertEqual(portrait.maxX, 1080 - (1920 - small.maxX))
+        XCTAssertEqual(portrait.maxY, 1920 - (1080 - small.maxY))
+        // 放不下原边距时贴边放进画面，不会越界
+        let wide = r.reanchored(inWidth: 1920, height: 1080, toWidth: 1080, height: 1920)
+        XCTAssertGreaterThanOrEqual(wide.x, 0)
+        XCTAssertLessThanOrEqual(wide.maxX, 1080)
     }
 
     func testOldSettingsStillDecode() throws {
@@ -240,5 +245,48 @@ final class OrientationTests: XCTestCase {
         let back = try JSONDecoder().decode(RestoreSettings.self, from: JSONEncoder().encode(s))
         XCTAssertEqual(back, s)
         XCTAssertTrue(s.recipeDescription.contains("orientation=r180f"))
+    }
+}
+
+final class ZoomStateTests: XCTestCase {
+    // 1000×500 的窗口里看 1920×1080 的图：适应窗口时 888.9×500，左右各有黑边
+    let g = ZoomGeometry(viewWidth: 1000, viewHeight: 500, imageWidth: 1920, imageHeight: 1080)
+
+    func testFitIsCentered() {
+        let r = ZoomState().displayRect(in: g)
+        XCTAssertEqual(r.height, 500, accuracy: 1e-6)
+        XCTAssertEqual(r.x + r.width / 2, 500, accuracy: 1e-6)
+    }
+
+    func testZoomKeepsPointUnderCursor() {
+        let p = (x: 600.0, y: 200.0)
+        let before = ZoomState().displayRect(in: g)
+        let u = (p.x - before.x) / before.width, v = (p.y - before.y) / before.height
+        let z = ZoomState().zoomed(by: 3, atX: p.x, y: p.y, in: g)
+        let after = z.displayRect(in: g)
+        XCTAssertEqual(z.zoom, 3, accuracy: 1e-9)
+        XCTAssertEqual(after.x + u * after.width, p.x, accuracy: 1e-6)
+        XCTAssertEqual(after.y + v * after.height, p.y, accuracy: 1e-6)
+    }
+
+    func testCannotZoomOutBelowFitOrPanPastEdges() {
+        XCTAssertEqual(ZoomState().zoomed(by: 0.2, atX: 10, y: 10, in: g), ZoomState())
+        let z = ZoomState(zoom: 4).panned(dx: 100_000, dy: 100_000, in: g)
+        let r = z.displayRect(in: g)
+        XCTAssertEqual(r.x, 0, accuracy: 1e-6)   // 左上角贴边，不露黑边
+        XCTAssertEqual(r.y, 0, accuracy: 1e-6)
+    }
+
+    func testActualPixels() {
+        let z = ZoomState.zoom(forPixelRatio: 1, backingScale: 2, in: g)
+        XCTAssertEqual(ZoomState(zoom: z).pixelRatio(backingScale: 2, in: g), 1, accuracy: 1e-9)
+    }
+
+    func testFocusOnFace() {
+        let face = ZoomState.Rect(x: 0.6, y: 0.2, width: 0.05, height: 0.1)
+        let z = ZoomState.focusing(on: face, fill: 0.5, in: g)
+        let r = z.displayRect(in: g)
+        XCTAssertEqual(face.height * r.height, 250, accuracy: 1e-6)          // 占视图高度一半
+        XCTAssertEqual(r.x + (face.x + face.width / 2) * r.width, 500, accuracy: 1e-6)  // 居中
     }
 }

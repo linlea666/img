@@ -93,6 +93,8 @@ public struct RestoreSettings: Codable, Equatable, Sendable {
     /// 最终锐化 0...1
     public var sharpen: Double = 0.3
     public var timestampMode: TimestampMode = .remove
+    /// 画面方向（输出时转正）
+    public var orientation: ImageOrientation = .identity
 
     // 输出
     public var format: OutputFormat = .png
@@ -105,6 +107,31 @@ public struct RestoreSettings: Codable, Equatable, Sendable {
 
     public init() {}
 
+    enum CodingKeys: String, CodingKey {
+        case scale, faceRestore, faceStrength, whiteBalance, autoLevels, autoBrightness, sharpen, timestampMode
+        case orientation, format, jpegQuality, nameTemplate, conflictPolicy, computeUnits
+    }
+
+    /// 逐项读取，缺少的字段用默认值（升级版本后旧的设置仍能读出来）
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = RestoreSettings()
+        scale = (try? c.decodeIfPresent(Scale.self, forKey: .scale)) ?? d.scale
+        faceRestore = (try? c.decodeIfPresent(Bool.self, forKey: .faceRestore)) ?? d.faceRestore
+        faceStrength = (try? c.decodeIfPresent(Double.self, forKey: .faceStrength)) ?? d.faceStrength
+        whiteBalance = (try? c.decodeIfPresent(Double.self, forKey: .whiteBalance)) ?? d.whiteBalance
+        autoLevels = (try? c.decodeIfPresent(Bool.self, forKey: .autoLevels)) ?? d.autoLevels
+        autoBrightness = (try? c.decodeIfPresent(Bool.self, forKey: .autoBrightness)) ?? d.autoBrightness
+        sharpen = (try? c.decodeIfPresent(Double.self, forKey: .sharpen)) ?? d.sharpen
+        timestampMode = (try? c.decodeIfPresent(TimestampMode.self, forKey: .timestampMode)) ?? d.timestampMode
+        orientation = (try? c.decodeIfPresent(ImageOrientation.self, forKey: .orientation)) ?? d.orientation
+        format = (try? c.decodeIfPresent(OutputFormat.self, forKey: .format)) ?? d.format
+        jpegQuality = (try? c.decodeIfPresent(Double.self, forKey: .jpegQuality)) ?? d.jpegQuality
+        nameTemplate = (try? c.decodeIfPresent(String.self, forKey: .nameTemplate)) ?? d.nameTemplate
+        conflictPolicy = (try? c.decodeIfPresent(ConflictPolicy.self, forKey: .conflictPolicy)) ?? d.conflictPolicy
+        computeUnits = (try? c.decodeIfPresent(ComputeUnits.self, forKey: .computeUnits)) ?? d.computeUnits
+    }
+
     /// 稳定的文字描述（只含影响画面的参数），写入任务清单便于复现
     public var recipeDescription: String {
         [
@@ -115,6 +142,7 @@ public struct RestoreSettings: Codable, Equatable, Sendable {
             "brightness=\(autoBrightness)",
             String(format: "sharpen=%.2f", sharpen),
             "timestamp=\(timestampMode.rawValue)",
+            "orientation=\(orientation.key)",
             "models=realesrgan-x4plus,gfpgan-1.4",
         ].joined(separator: "&")
     }

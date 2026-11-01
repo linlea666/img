@@ -27,6 +27,47 @@ final class ReFrameEngineTests: XCTestCase {
         XCTAssertEqual(SuperResolver.tileOrigins(size: 500, tile: 256, overlap: 12), [0, 232, 244])
     }
 
+    func testRotation() {
+        var img = RGBAImage(width: 2, height: 1)
+        img.setPixel(0, 0, (255, 0, 0))   // 左红
+        img.setPixel(1, 0, (0, 0, 255))   // 右蓝
+        let cg = ImageFiles.cgImage(from: img)
+        let r180 = ImageFiles.rgba(from: ImageFiles.apply(ImageOrientation(rotation: .upsideDown), to: cg))
+        XCTAssertEqual(r180.pixel(0, 0).b, 255)
+        let cw = ImageFiles.rgba(from: ImageFiles.apply(ImageOrientation(rotation: .clockwise90), to: cg))
+        XCTAssertEqual(cw.width, 1)
+        XCTAssertEqual(cw.height, 2)
+        XCTAssertEqual(cw.pixel(0, 0).r, 255)   // 顺时针：原来的左边转到上面
+        let ccw = ImageFiles.rgba(from: ImageFiles.apply(ImageOrientation(rotation: .counterClockwise90), to: cg))
+        XCTAssertEqual(ccw.pixel(0, 0).b, 255)
+        let flip = ImageFiles.rgba(from: ImageFiles.apply(ImageOrientation(rotation: .none, flipHorizontal: true), to: cg))
+        XCTAssertEqual(flip.pixel(0, 0).b, 255)
+    }
+
+    /// 倒装摄像头：画面转 180° 放正，原样保留的时间水印仍然正着在右下角
+    func testUpsideDownKeepsTimestampUpright() async throws {
+        let urls = try writeFrames(5)
+        let engine = RestorationEngine(modelsDirectory: nil)
+        var settings = RestoreSettings()
+        settings.faceRestore = false
+        settings.sharpen = 0
+        settings.scale = .x4
+        settings.timestampMode = .keep
+        settings.orientation = ImageOrientation(rotation: .upsideDown)
+        let ctx = try await engine.buildContext(urls: urls, settings: settings)
+        XCTAssertNotNil(ctx?.timestampRect)
+        let result = try await engine.restore(url: urls[0], settings: settings, context: ctx)
+        let out = ImageFiles.rgba(from: result.image)
+        XCTAssertEqual(out.width, 960)
+        // 水印仍在右下角原位置（第 0 帧第 141 列、第 127 行是黄色像素），且没有被转倒
+        let p = out.pixel(141 * 4 + 2, 127 * 4 + 2)
+        XCTAssertGreaterThan(Int(p.r), 150)
+        XCTAssertLessThan(Int(p.b), 120)
+        // 原来在左侧的"人"（x 40～70）转 180° 后到了右侧
+        let person = out.pixel((240 - 55) * 4, (135 - 60) * 4)
+        XCTAssertLessThan(Int(person.g), 100)
+    }
+
     func testImageRoundTrip() throws {
         let frame = makeFrame(0)
         let back = ImageFiles.rgba(from: ImageFiles.cgImage(from: frame))

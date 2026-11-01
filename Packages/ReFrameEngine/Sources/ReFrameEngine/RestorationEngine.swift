@@ -204,10 +204,17 @@ public actor RestorationEngine {
             image = f.outputImage?.cropped(to: extent) ?? image
         }
         var output = try render(image)
+        let unrotatedWidth = output.width, unrotatedHeight = output.height
 
-        // 6. 原样保留水印：把原始水印放大贴回
+        // 6. 画面方向：AI 按原方向处理，最后转正
+        output = ImageFiles.apply(settings.orientation, to: output)
+
+        // 7. 原样保留水印：画面转正后，把正着的原始水印放大贴回原来的角上
+        //   （摄像头倒装时画面是倒的，但时间文字是后叠加的、本来就是正的，不能跟着一起转）
         if let patch = keptPatch, let rect = context?.timestampRect {
-            output = paste(patch, at: rect.scaled(by: settings.scale.rawValue), scale: settings.scale.rawValue, onto: output)
+            let target = rect.scaled(by: settings.scale.rawValue)
+                .reanchored(inWidth: unrotatedWidth, height: unrotatedHeight, toWidth: output.width, height: output.height)
+            output = paste(patch, at: target, onto: output)
         }
         return RestoreResult(image: output, facesRestored: faces, usedSuperResolutionModel: usedModel)
     }
@@ -233,7 +240,7 @@ public actor RestorationEngine {
         return cg
     }
 
-    private func paste(_ patch: RGBAImage, at rect: PixelRect, scale: Int, onto image: CGImage) -> CGImage {
+    private func paste(_ patch: RGBAImage, at rect: PixelRect, onto image: CGImage) -> CGImage {
         let w = image.width, h = image.height
         guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
                                   space: ImageFiles.sRGB, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {

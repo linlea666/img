@@ -38,6 +38,7 @@ struct PlayerView: View {
         .onChange(of: scope) { _, _ in reload() }
         .onChange(of: source) { _, _ in reload() }
         .onChange(of: state.batch.isRunning) { _, running in if !running { reload() } }
+        .onChange(of: state.settings.orientation) { _, _ in reload() }
         .onDisappear { player.pause() }
     }
 
@@ -65,7 +66,12 @@ struct PlayerView: View {
 
     private func reload() {
         let list = state.playlist(scope: scope, source: source)
-        player.load(frames: list.primary, compare: list.compare)
+        // 原图按"画面方向"放正显示；修复结果写出时已经放正
+        let originalOrientation = state.settings.orientation
+        let primaryIsOriginal = scope != .outputFolder && source == .original
+        player.load(frames: list.primary, compare: list.compare,
+                    primaryOrientation: primaryIsOriginal ? originalOrientation : .identity,
+                    compareOrientation: originalOrientation)
     }
 
     // MARK: - 画面

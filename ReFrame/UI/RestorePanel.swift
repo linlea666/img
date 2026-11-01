@@ -10,6 +10,7 @@ struct RestorePanel: View {
         Form {
             batchSection
             outputSection
+            orientationSection
             restoreSection
             timestampSection
             advancedSection
@@ -116,6 +117,25 @@ struct RestorePanel: View {
         .disabled(state.batch.isRunning)
     }
 
+    // MARK: - 方向
+
+    private var orientationSection: some View {
+        Section("画面方向") {
+            Toggle("图片是倒着的（旋转 180° 放正）", isOn: Binding(
+                get: { state.settings.orientation.rotation == .upsideDown },
+                set: { state.setUpsideDown($0) }))
+            DisclosureGroup("其他方向") {
+                Picker("旋转", selection: $state.settings.orientation.rotation) {
+                    ForEach(ImageRotation.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                Toggle("左右镜像", isOn: $state.settings.orientation.flipHorizontal)
+            }
+            Text("修复后的图片、预览和播放都会按这里放正；时间水印选\"原样保留\"时仍正着放在右下角。已经修复过的图改了方向后，请把\"已存在时\"设为\"覆盖旧的修复结果\"再修一次。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .disabled(state.batch.isRunning)
+    }
+
     // MARK: - 修复
 
     private var restoreSection: some View {
@@ -178,7 +198,7 @@ struct RestorePanel: View {
             Picker("计算单元", selection: $state.settings.computeUnits) {
                 ForEach(RestoreSettings.ComputeUnits.allCases, id: \.self) { Text($0.title).tag($0) }
             }
-            Text("流程：去水印 → 去色偏/拉明暗（整批统一参数，不闪烁）→ Real-ESRGAN ×4 → GFPGAN 人脸修复 → ×2 → 锐化")
+            Text("流程：去水印 → 去色偏/拉明暗（整批统一参数，不闪烁）→ Real-ESRGAN ×4 → GFPGAN 人脸修复 → ×2 → 锐化 → 放正")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .disabled(state.batch.isRunning)

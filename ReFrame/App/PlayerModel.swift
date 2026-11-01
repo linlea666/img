@@ -1,25 +1,32 @@
 import AppKit
 import ImageIO
 import ReFrameCore
+import ReFrameEngine
 import SwiftUI
 
 /// 解码缓存：后台解码并预读后面几帧，播放时不卡顿。
 /// 1080p 一帧约 8MB，缓存上限 24 帧（约 200MB），照顾 8GB 内存。
 actor FrameCache {
-    private var images: [URL: CGImage] = [:]
-    private var order: [URL] = []
+    struct Key: Hashable, Sendable {
+        let url: URL
+        let orientation: ImageOrientation
+    }
+
+    private var images: [Key: CGImage] = [:]
+    private var order: [Key] = []
     private let limit = 24
 
-    func image(for url: URL) -> CGImage? {
-        if let hit = images[url] {
-            touch(url)
+    func image(for key: Key) -> CGImage? {
+        if let hit = images[key] {
+            touch(key)
             return hit
         }
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+        guard let source = CGImageSourceCreateWithURL(key.url as CFURL, nil),
+              let decoded = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
         else { return nil }
-        images[url] = image
-        touch(url)
+        let image = ImageFiles.apply(key.orientation, to: decoded)
+        images[key] = image
+        touch(key)
         while order.count > limit {
             let old = order.removeFirst()
             images[old] = nil
@@ -27,8 +34,8 @@ actor FrameCache {
         return image
     }
 
-    func prefetch(_ urls: [URL]) {
-        for url in urls where images[url] == nil { _ = image(for: url) }
+    func prefetch(_ keys: [Key]) {
+        for key in keys where images[key] == nil { _ = image(for: key) }
     }
 
     func clear() {
@@ -36,9 +43,9 @@ actor FrameCache {
         order = []
     }
 
-    private func touch(_ url: URL) {
-        order.removeAll { $0 == url }
-        order.append(url)
+    private func touch(_ key: Key) {
+        order.removeAll { $0 == key }
+        order.append(key)
     }
 }
 
@@ -54,6 +61,9 @@ final class PlayerModel: ObservableObject {
     @Published private(set) var currentCompare: CGImage?
     @Published var fps: Double = 15
     @Published var mode: LoopMode = .loop { didSet { sequencer.mode = mode } }
+    /// 主画面 / 对比画面的显示方向（原图需要按设置放正，修复结果已经是正的）
+    private(set) var primaryOrientation: ImageOrientation = .identity
+    private(set) var compareOrientation: ImageOrientation = .identity
 
     private var sequencer = PlaybackSequencer(count: 0, mode: .loop)
     private var loop: Task<Void, Never>?
@@ -61,10 +71,13 @@ final class PlayerModel: ObservableObject {
 
     var currentName: String { frames.indices.contains(index) ? frames[index].lastPathComponent : "" }
 
-    func load(frames: [URL], compare: [URL]?) {
+    func load(frames: [URL], compare: [URL]?, primaryOrientation: ImageOrientation = .identity,
+              compareOrientation: ImageOrientation = .identity) {
         pause()
         self.frames = frames
         self.compareFrames = compare
+        self.primaryOrientation = primaryOrientation
+        self.compareOrientation = compareOrientation
         sequencer = PlaybackSequencer(count: frames.count, mode: mode)
         index = 0
         current = nil
@@ -117,21 +130,23 @@ final class PlayerModel: ObservableObject {
         guard frames.indices.contains(i) else { return }
         let url = frames[i]
         let compareURL = compareFrames.flatMap { $0.indices.contains(i) ? $0[i] : nil }
-        let image = await cache.image(for: url)
+        let image = await cache.image(for: .init(url: url, orientation: primaryOrientation))
         var compareImage: CGImage?
-        if let compareURL { compareImage = await cache.image(for: compareURL) }
+        if let compareURL { compareImage = await cache.image(for: .init(url: compareURL, orientation: compareOrientation)) }
         index = i
         current = image
         currentCompare = compareImage
         // 预读接下来几帧（按当前方向）
         let dir = sequencer.direction
-        var upcoming: [URL] = []
+        var upcoming: [FrameCache.Key] = []
         for k in 1...6 {
             var j = i + k * dir
             if mode != .once { j = (j % frames.count + frames.count) % frames.count }
             guard frames.indices.contains(j) else { break }
-            upcoming.append(frames[j])
-            if let c = compareFrames, c.indices.contains(j) { upcoming.append(c[j]) }
+            upcoming.append(.init(url: frames[j], orientation: primaryOrientation))
+            if let c = compareFrames, c.indices.contains(j) {
+                upcoming.append(.init(url: c[j], orientation: compareOrientation))
+            }
         }
         let cache = self.cache
         Task.detached(priority: .utility) { await cache.prefetch(upcoming) }

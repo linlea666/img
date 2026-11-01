@@ -87,7 +87,8 @@ struct ExportSheet: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         let frames = order.map { player.frames[$0] }
-        let options = VideoExporter.Options(frames: frames, fps: Int(fps), codec: codec, quality: quality, outputURL: url)
+        let options = VideoExporter.Options(frames: frames, fps: Int(fps), codec: codec, quality: quality, outputURL: url,
+                                            orientation: player.primaryOrientation)
         progress = 0
         message = nil
         let activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled],

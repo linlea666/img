@@ -1,3 +1,4 @@
+import ReFrameCore
 import ReFrameEngine
 import SwiftUI
 import UniformTypeIdentifiers
@@ -5,13 +6,14 @@ import UniformTypeIdentifiers
 /// 缩略图加载（原图只有 240×135，直接读即可）
 actor ThumbnailLoader {
     static let shared = ThumbnailLoader()
-    private var cache: [URL: CGImage] = [:]
+    private var cache: [String: CGImage] = [:]
 
-    func load(_ url: URL) -> CGImage? {
-        if let hit = cache[url] { return hit }
-        let image = try? ImageFiles.loadCGImage(url, maxPixelSize: 320)
+    func load(_ url: URL, orientation: ImageOrientation) -> CGImage? {
+        let key = "\(url.path)|\(orientation.key)"
+        if let hit = cache[key] { return hit }
+        let image = (try? ImageFiles.loadCGImage(url, maxPixelSize: 320)).map { ImageFiles.apply(orientation, to: $0) }
         if cache.count > 2000 { cache.removeAll() }
-        cache[url] = image
+        cache[key] = image
         return image
     }
 }
@@ -34,7 +36,8 @@ struct LibraryView: View {
                         LazyVGrid(columns: columns, spacing: 8) {
                             ForEach(state.items) { item in
                                 ThumbnailCell(item: item, selected: state.selection.contains(item.id),
-                                              focused: state.focusedID == item.id)
+                                              focused: state.focusedID == item.id,
+                                              orientation: state.settings.orientation)
                                     .id(item.id)
                                     .onTapGesture(count: 2) {
                                         state.focusedID = item.id
@@ -96,6 +99,7 @@ struct LibraryView: View {
     private var summary: String {
         let done = state.items.filter { $0.status == .done }.count
         var s = "\(state.items.count) 张，已修复 \(done) 张"
+        if state.settings.orientation.rotation != .none { s += "，已设为\(state.settings.orientation.rotation.title)放正" }
         if state.selection.count > 1 { s += "，选中 \(state.selection.count) 张" }
         return s
     }
@@ -121,6 +125,7 @@ struct ThumbnailCell: View {
     let item: LibraryItem
     let selected: Bool
     let focused: Bool
+    let orientation: ImageOrientation
     @State private var image: CGImage?
 
     var body: some View {
@@ -133,7 +138,7 @@ struct ThumbnailCell: View {
                         Rectangle().fill(.quaternary)
                     }
                 }
-                .aspectRatio(16 / 9, contentMode: .fit)
+                .aspectRatio(orientation.rotation.swapsDimensions ? 9 / 16 : 16 / 9, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 5))
                 statusBadge.padding(4)
             }
@@ -144,7 +149,9 @@ struct ThumbnailCell: View {
         .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Color.accentColor.opacity(0.25) : .clear))
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(focused ? Color.accentColor : .clear, lineWidth: 2))
         .contentShape(Rectangle())
-        .task(id: item.url) { image = await ThumbnailLoader.shared.load(item.url) }
+        .task(id: "\(item.url.path)|\(orientation.key)") {
+            image = await ThumbnailLoader.shared.load(item.url, orientation: orientation)
+        }
     }
 
     @ViewBuilder private var statusBadge: some View {

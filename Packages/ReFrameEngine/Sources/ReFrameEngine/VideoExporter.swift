@@ -2,6 +2,7 @@ import AVFoundation
 import CoreGraphics
 import CoreVideo
 import Foundation
+import ReFrameCore
 
 /// 把图片序列导出为视频（HEVC / H.264）。先写临时文件，成功后再移动到目标位置。
 public enum VideoExporter {
@@ -40,13 +41,17 @@ public enum VideoExporter {
         public var codec: Codec
         public var quality: Quality
         public var outputURL: URL
+        /// 播放原图时与预览一致地转正
+        public var orientation: ImageOrientation
 
-        public init(frames: [URL], fps: Int, codec: Codec, quality: Quality, outputURL: URL) {
+        public init(frames: [URL], fps: Int, codec: Codec, quality: Quality, outputURL: URL,
+                    orientation: ImageOrientation = .identity) {
             self.frames = frames
             self.fps = fps
             self.codec = codec
             self.quality = quality
             self.outputURL = outputURL
+            self.orientation = orientation
         }
     }
 
@@ -64,7 +69,7 @@ public enum VideoExporter {
 
     public static func export(_ options: Options, progress: @escaping @Sendable (Double) -> Void) async throws {
         guard let first = options.frames.first else { throw ExportError.noFrames }
-        let firstImage = try ImageFiles.loadCGImage(first)
+        let firstImage = try ImageFiles.apply(options.orientation, to: ImageFiles.loadCGImage(first))
         // 编码器要求偶数尺寸
         let width = firstImage.width / 2 * 2, height = firstImage.height / 2 * 2
 
@@ -109,7 +114,7 @@ public enum VideoExporter {
                 }
                 let image: CGImage
                 if let c = cache, c.0 == url { image = c.1 } else {
-                    image = try ImageFiles.loadCGImage(url)
+                    image = try ImageFiles.apply(options.orientation, to: ImageFiles.loadCGImage(url))
                     cache = (url, image)
                 }
                 guard let pool = adaptor.pixelBufferPool else { throw ExportError.writer("缓冲池不可用") }

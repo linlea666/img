@@ -96,7 +96,11 @@ final class AppState: ObservableObject {
         panel.canChooseDirectories = false
         panel.allowedContentTypes = [.image]
         panel.message = "选择要修复的图片（原图不会被修改）"
-        if panel.runModal() == .OK { add(urls: panel.urls) }
+        let box = attachUpsideDownOption(to: panel)
+        if panel.runModal() == .OK {
+            setUpsideDown(box.state == .on)
+            add(urls: panel.urls)
+        }
     }
 
     func presentOpenFolder() {
@@ -104,7 +108,32 @@ final class AppState: ObservableObject {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.message = "选择包含图片的文件夹"
-        if panel.runModal() == .OK, let url = panel.url { addFolder(url) }
+        let box = attachUpsideDownOption(to: panel)
+        if panel.runModal() == .OK, let url = panel.url {
+            setUpsideDown(box.state == .on)
+            addFolder(url)
+        }
+    }
+
+    /// 打开对话框底部的勾选框：这批图片是倒着的
+    private func attachUpsideDownOption(to panel: NSOpenPanel) -> NSButton {
+        let box = NSButton(checkboxWithTitle: "这批图片是倒着的（修复后旋转 180° 放正）", target: nil, action: nil)
+        box.state = settings.orientation.rotation == .upsideDown ? .on : .off
+        box.sizeToFit()
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: box.frame.width + 40, height: box.frame.height + 20))
+        box.frame.origin = NSPoint(x: 20, y: 10)
+        container.addSubview(box)
+        panel.accessoryView = container
+        panel.isAccessoryViewDisclosed = true
+        return box
+    }
+
+    func setUpsideDown(_ on: Bool) {
+        if on {
+            settings.orientation.rotation = .upsideDown
+        } else if settings.orientation.rotation == .upsideDown {
+            settings.orientation.rotation = .none
+        }
     }
 
     func addFolder(_ folder: URL) {
@@ -235,6 +264,9 @@ final class AppState: ObservableObject {
             || old.autoLevels != settings.autoLevels || old.autoBrightness != settings.autoBrightness {
             invalidateContext()
         }
+        if old.orientation != settings.orientation {
+            loadCompare()
+        }
         if old.nameTemplate != settings.nameTemplate || old.format != settings.format || old.scale != settings.scale {
             refreshStatuses()
             loadCompare()
@@ -287,8 +319,10 @@ final class AppState: ObservableObject {
         guard let item = focusedItem else { compare = nil; return }
         let output = existingOutput(for: item)
         let id = item.id
+        let orientation = settings.orientation
         Task {
-            let before = try? ImageFiles.loadCGImage(item.url)
+            // 原图按设置的方向显示，与修复结果对齐
+            let before = (try? ImageFiles.loadCGImage(item.url)).map { ImageFiles.apply(orientation, to: $0) }
             let after = output.flatMap { try? ImageFiles.loadCGImage($0) }
             guard focusedID == id, let before else { return }
             compare = ComparePair(itemID: id, before: before, after: after,
@@ -313,7 +347,7 @@ final class AppState: ObservableObject {
                 if let current = compare, current.itemID == id {
                     before = current.before
                 } else {
-                    before = try ImageFiles.loadCGImage(item.url)
+                    before = try ImageFiles.apply(settings.orientation, to: ImageFiles.loadCGImage(item.url))
                 }
                 var note = String(format: "试修预览（未保存）：用时 %.1f 秒", seconds)
                 note += result.facesRestored > 0 ? "，修复了 \(result.facesRestored) 张脸" : "，未检测到可修复的人脸"

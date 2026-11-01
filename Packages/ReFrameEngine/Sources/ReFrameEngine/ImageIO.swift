@@ -109,3 +109,36 @@ public enum ImageFiles {
         }
     }
 }
+
+extension ImageFiles {
+    /// 按方向旋转/镜像（像素重排，不损失画质）
+    public static func apply(_ orientation: ImageOrientation, to image: CGImage) -> CGImage {
+        guard !orientation.isIdentity else { return image }
+        let w = image.width, h = image.height
+        let size = orientation.outputSize(width: w, height: h)
+        guard let ctx = CGContext(data: nil, width: size.width, height: size.height, bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: sRGB,
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return image }
+        ctx.interpolationQuality = .none
+        // Core Graphics 坐标 y 轴向上；变换按"最后写的最先作用"组合：先旋转，再镜像
+        if orientation.flipHorizontal {
+            ctx.translateBy(x: CGFloat(size.width), y: 0)
+            ctx.scaleBy(x: -1, y: 1)
+        }
+        switch orientation.rotation {
+        case .none:
+            break
+        case .upsideDown:
+            ctx.translateBy(x: CGFloat(w), y: CGFloat(h))
+            ctx.rotate(by: .pi)
+        case .clockwise90:
+            ctx.translateBy(x: 0, y: CGFloat(w))
+            ctx.rotate(by: -.pi / 2)
+        case .counterClockwise90:
+            ctx.translateBy(x: CGFloat(h), y: 0)
+            ctx.rotate(by: .pi / 2)
+        }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return ctx.makeImage() ?? image
+    }
+}

@@ -202,3 +202,43 @@ final class PlaybackSequencerTests: XCTestCase {
         XCTAssertEqual(PlaybackSequencer.exportOrder(count: 3, mode: .once, repeats: 5), [0, 1, 2])
     }
 }
+
+final class OrientationTests: XCTestCase {
+    func testOutputSize() {
+        let a = ImageOrientation(rotation: .upsideDown).outputSize(width: 1920, height: 1080)
+        XCTAssertEqual(a.width, 1920)
+        XCTAssertEqual(a.height, 1080)
+        let b = ImageOrientation(rotation: .clockwise90).outputSize(width: 1920, height: 1080)
+        XCTAssertEqual(b.width, 1080)
+        XCTAssertEqual(b.height, 1920)
+    }
+
+    func testTimestampStaysAtBottomRight() {
+        // 1920×1080 右下角的水印，转 180° 后仍应放在右下角
+        let r = PixelRect(x: 800, y: 990, width: 700, height: 60)
+        let same = r.reanchored(inWidth: 1920, height: 1080, toWidth: 1920, height: 1080)
+        XCTAssertEqual(same, r)
+        // 转 90° 变竖屏：保持到右边、下边的距离
+        let portrait = r.reanchored(inWidth: 1920, height: 1080, toWidth: 1080, height: 1920)
+        XCTAssertEqual(portrait.maxX, 1080 - (1920 - r.maxX))
+        XCTAssertEqual(portrait.maxY, 1920 - (1080 - r.maxY))
+    }
+
+    func testOldSettingsStillDecode() throws {
+        // 旧版本保存的设置里没有 orientation 字段
+        let old = #"{"scale":4,"faceStrength":0.5}"#.data(using: .utf8)!
+        let s = try JSONDecoder().decode(RestoreSettings.self, from: old)
+        XCTAssertEqual(s.scale, .x4)
+        XCTAssertEqual(s.faceStrength, 0.5)
+        XCTAssertEqual(s.orientation, .identity)
+        XCTAssertEqual(s.format, .png)
+    }
+
+    func testSettingsRoundTrip() throws {
+        var s = RestoreSettings()
+        s.orientation = ImageOrientation(rotation: .upsideDown, flipHorizontal: true)
+        let back = try JSONDecoder().decode(RestoreSettings.self, from: JSONEncoder().encode(s))
+        XCTAssertEqual(back, s)
+        XCTAssertTrue(s.recipeDescription.contains("orientation=r180f"))
+    }
+}

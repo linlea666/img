@@ -1,0 +1,17 @@
+# Xcode / XcodeGen 生成物（项目由 project.yml 生成）
+*.xcodeproj/
+build/
+dist/
+DerivedData/
+.build/
+.swiftpm/
+xcuserdata/
+*.dmg
+.DS_Store
+__pycache__/
+ReFrame/Info.plist
+
+# AI 模型在 CI 里生成
+*.mlmodelc/
+*.mlpackage/
+*.pth

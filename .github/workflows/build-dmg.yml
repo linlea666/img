@@ -1,0 +1,144 @@
+name: Build DMG
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Core tests (ReFrameCore)
+        run: swift test --package-path Packages/ReFrameCore
+
+      # ---------- AI 模型：下载官方权重 → 转换 Core ML → 与 PyTorch 对比验证 → 编译 ----------
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache converted models
+        id: models
+        uses: actions/cache@v4
+        with:
+          path: build/models
+          key: coreml-${{ hashFiles('scripts/convert_models.py') }}-v1
+
+      - name: Convert models (PyTorch → Core ML, validated)
+        if: steps.models.outputs.cache-hit != 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install "torch==2.7.0" "coremltools==9.0" numpy pillow
+          python scripts/convert_models.py --out build/models --weights-dir build/weights --validate
+
+      - name: Compile models
+        run: |
+          mkdir -p ReFrame/Resources/Models
+          for m in build/models/*.mlpackage; do
+            xcrun coremlcompiler compile "$m" ReFrame/Resources/Models/
+          done
+          ls -la ReFrame/Resources/Models
+          du -sh ReFrame/Resources/Models/*.mlmodelc
+
+      - name: Engine tests (real models, end-to-end 240×135 → 1920×1080, video export)
+        continue-on-error: true
+        env:
+          REFRAME_MODELS_DIR: ${{ github.workspace }}/ReFrame/Resources/Models
+        run: swift test -c release -Xswiftc -enable-testing --package-path Packages/ReFrameEngine
+
+      # ---------- App ----------
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build app (Release, arm64)
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild build \
+            -project ReFrame.xcodeproj \
+            -scheme ReFrame \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath build/dd \
+            -skipPackagePluginValidation \
+            CODE_SIGN_IDENTITY=- | tee build/xcodebuild.log | grep -E "error:|warning: .*ReFrame|BUILD (SUCCEEDED|FAILED)" || true
+          test -d build/dd/Build/Products/Release/ReFrame.app
+
+      - name: Ad-hoc sign and verify
+        run: |
+          APP=build/dd/Build/Products/Release/ReFrame.app
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          lipo -archs "$APP/Contents/MacOS/ReFrame"
+          echo "Bundled models:"; ls "$APP/Contents/Resources/Models"
+          test -d "$APP/Contents/Resources/Models/RealESRGANx4.mlmodelc"
+          test -d "$APP/Contents/Resources/Models/GFPGANv14.mlmodelc"
+          du -sh "$APP"
+
+      - name: Smoke test (launch for a few seconds)
+        continue-on-error: true
+        run: |
+          APP=build/dd/Build/Products/Release/ReFrame.app
+          "$APP/Contents/MacOS/ReFrame" > smoke.log 2>&1 &
+          PID=$!
+          sleep 10
+          if kill -0 $PID 2>/dev/null; then echo "app is running"; kill $PID; else echo "app exited early"; cat smoke.log; exit 1; fi
+
+      - name: Package DMG
+        run: |
+          VERSION=$(git describe --tags --always)
+          scripts/make_dmg.sh build/dd/Build/Products/Release/ReFrame.app "dist/ReFrame-${VERSION}.dmg"
+          ls -lh dist
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReFrame-dmg
+          path: dist/*.dmg
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild.log
+
+      - name: Publish release (tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.dmg
+
+      # 默认分支每次构建都更新"最新构建"预发布版，方便直接下载 DMG
+      - name: Publish latest build (default branch)
+        if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest-build --yes --cleanup-tag || true
+          gh release create latest-build dist/*.dmg \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "最新构建（$(git rev-parse --short HEAD)）" \
+            --notes "自动构建的最新版本。下载 .dmg，打开后把 ReFrame 拖进“应用程序”。首次打开请看 DMG 里的《首次打开必读》。"

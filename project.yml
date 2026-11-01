@@ -1,0 +1,66 @@
+name: ReFrame
+options:
+  bundleIdPrefix: com.linlea
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+packages:
+  ReFrameCore:
+    path: Packages/ReFrameCore
+  ReFrameEngine:
+    path: Packages/ReFrameEngine
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: NO
+    # 没有开发者账号：本地临时签名（Apple 芯片要求至少有临时签名才能运行）
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+    ENABLE_HARDENED_RUNTIME: NO
+
+targets:
+  ReFrame:
+    type: application
+    platform: macOS
+    sources:
+      - path: ReFrame
+        excludes:
+          - "Resources/Models/**"
+      # AI 模型（CI 里转换并编译成 .mlmodelc 后放进来）整体作为文件夹拷进 Resources/Models
+      - path: ReFrame/Resources/Models
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - package: ReFrameCore
+        product: ReFrameCore
+      - package: ReFrameEngine
+        product: ReFrameEngine
+    info:
+      path: ReFrame/Info.plist
+      properties:
+        CFBundleDisplayName: ReFrame
+        CFBundleName: ReFrame
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.photography
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSHumanReadableCopyright: "ReFrame — 低清人物图片修复与循环播放"
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Image
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.image
+              - public.folder
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.linlea.reframe
+        PRODUCT_NAME: ReFrame
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        COMBINE_HIDPI_IMAGES: YES
